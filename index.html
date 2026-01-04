@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SharpX Interactive</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1d2671">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SharpX">
+<link rel="icon" type="image/png" href="icon-192.png">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  min-height:100vh;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  background:linear-gradient(135deg,#1d2671,#c33764);
+  font-family:system-ui,Arial;
+  transition:.4s;
+}
+body.dark{background:linear-gradient(135deg,#000,#222);}
+body.offline .online-only{opacity:.4;pointer-events:none;}
+.app{
+  width:100%;
+  max-width:540px;
+  background:rgba(255,255,255,.18);
+  backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,.25);
+  border-radius:22px;
+  padding:18px;
+  color:#fff;
+}
+.header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:12px;
+}
+.toggle{
+  width:42px;height:42px;
+  border-radius:50%;border:none;
+  cursor:pointer;font-size:18px;
+}
+.canvas-container{
+  position:relative;
+  overflow:hidden;
+  border-radius:16px;
+  background:#000;
+  margin:12px 0;
+  width:100%;
+  height:360px;
+}
+canvas{
+  display:block;
+  transform-origin: top left;
+}
+.controls{display:grid;gap:10px}
+label{font-size:.85rem}
+input[type=range],input[type=number]{width:100%}
+.buttons{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(60px,1fr));
+  gap:8px;
+  align-items:center;
+}
+button, select{
+  padding:10px;
+  border-radius:12px;
+  border:none;
+  cursor:pointer;
+  background:rgba(255,255,255,.25);
+  color:#fff;
+  font-weight:600;
+}
+footer{
+  margin-top:10px;
+  text-align:center;
+  font-size:.75rem;
+  opacity:.85;
+}
+.splitHandle{
+  position:absolute;
+  width:8px;
+  background:#fff;
+  opacity:.5;
+  top:0; bottom:0;
+  cursor:ew-resize;
+  border-radius:4px;
+  z-index:5;
+}
+#imageInfo{
+  margin-top:8px;font-size:.8rem;opacity:.85;
+}
+#updateToast{
+  position:fixed;bottom:16px;left:50%;
+  transform:translateX(-50%);
+  background:#111;color:#fff;padding:12px 16px;
+  border-radius:14px;display:none;
+  align-items:center;gap:10px;z-index:9999;
+  box-shadow:0 8px 20px rgba(0,0,0,.4);
+}
+#offlineBadge{
+  position:fixed;top:12px;right:12px;
+  background:#ff9800;color:#000;
+  padding:4px 10px;border-radius:10px;
+  font-size:12px;display:none;z-index:9999;
+}
+#cameraModal{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:rgba(0,0,0,0.85);display:none;
+  justify-content:center;align-items:center;z-index:1000;flex-direction:column;
+}
+#cameraModal video{max-width:90%;max-height:70%;border-radius:16px;}
+#cameraModal div{margin-top:12px;display:flex;gap:12px;}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <h2>SharpX</h2>
+    <button class="toggle" id="darkToggle">🌙</button>
+  </div>
+  <input type="file" id="upload" accept="image/*">
+  <div class="canvas-container">
+    <canvas id="canvas"></canvas>
+    <div id="splitHandle" class="splitHandle"></div>
+  </div>
+  <div class="controls">
+    <label>Sharpness</label>
+    <input type="range" id="sharp" min="0" max="3" step="0.01" value="1">
+    <label>Noise Reduction</label>
+    <input type="range" id="noise" min="0" max="3" step="0.01" value="0">
+    <label>Zoom (%)</label>
+    <input type="range" id="zoom" min="50" max="200" value="100">
+    <div class="buttons">
+      <button id="auto">Auto</button>
+      <button id="reset">Clean</button>
+      <button id="download">Download</button>
+      <select id="upscaleFactor">
+        <option value="2">2×</option>
+        <option value="3">3×</option>
+        <option value="4">4×</option>
+      </select>
+      <button id="upscale">Upscale</button>
+      <button id="splitToggle">Split On</button>
+      <button id="cameraBtn">📷 Camera</button>
+      <label>DPI</label>
+      <input type="number" id="dpi" value="300" min="72" max="1200" step="1">
+    </div>
+    <div id="imageInfo"></div>
+  </div>
+  <footer>© Manik Roy 2025. All Rights Reserved.</footer>
+</div>
+
+<!-- Camera Modal -->
+<div id="cameraModal">
+  <video id="cameraVideo" autoplay></video>
+  <div>
+    <button id="capturePhoto">Capture</button>
+    <button id="closeCamera">Close</button>
+  </div>
+</div>
+
+<!-- Update Toast -->
+<div id="updateToast">
+  <span>New version available</span>
+  <button id="reloadBtn">Update</button>
+</div>
+
+<!-- Offline Badge -->
+<div id="offlineBadge">Offline</div>
+
+<script>
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+const container=document.querySelector('.canvas-container');
+
+let originalImageData=null,baseImageData=null,needsUpdate=false,splitX=0.5;
+let originalForCompare=null,disableSplit=false,splitEnabled=true;
+
+let zoom=1,displayScale=1,offsetX=0,offsetY=0,isDragging=false,dragStartX=0,dragStartY=0;
+
+/* Smooth sharpen */
+function smoothAmount(v){return Math.pow(v,1.6);}
+
+/* Fit canvas without stretching */
+function fitCanvas(img){
+  canvas.width=img.width; canvas.height=img.height;
+  ctx.drawImage(img,0,0,canvas.width,canvas.height);
+  originalImageData=ctx.getImageData(0,0,canvas.width,canvas.height);
+  baseImageData=ctx.getImageData(0,0,canvas.width,canvas.height);
+
+  const containerW=container.clientWidth;
+  const containerH=container.clientHeight;
+  displayScale=Math.min(containerW/canvas.width,containerH/canvas.height,1);
+  offsetX=(containerW-canvas.width*displayScale)/2;
+  offsetY=(containerH-canvas.height*displayScale)/2;
+  zoom=1;
+  disableSplit=false; splitEnabled=true;
+  updateZoom();
+  needsUpdate=true;
+}
+
+/* Upload image */
+document.getElementById("upload").addEventListener("change", e=>{
+  const file=e.target.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=evt=>{
+    const img=new Image();
+    img.onload=()=>fitCanvas(img);
+    img.src=evt.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+/* Sharpen */
+function sharpen(imageData,amount){
+  if(amount<=0) return imageData;
+  const w=imageData.width,h=imageData.height;
+  const src=imageData.data;
+  const out=new Uint8ClampedArray(src);
+  const orig=new Uint8ClampedArray(src);
+  const k=[0,-1,0,-1,5,-1,0,-1,0];
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      for(let c=0;c<3;c++){
+        let i=(y*w+x)*4+c,v=0,ki=0;
+        for(let ky=-1;ky<=1;ky++){
+          for(let kx=-1;kx<=1;kx++){
+            let ii=((y+ky)*w+(x+kx))*4+c;
+            v+=orig[ii]*k[ki++];
+          }
+        }
+        out[i]=orig[i]*(1-amount)+v*amount;
+      }
+    }
+  }
+  return new ImageData(out,w,h);
+}
+
+/* Noise */
+function reduceNoise(imageData,amount){
+  if(amount<=0) return imageData;
+  const w=imageData.width,h=imageData.height;
+  const src=imageData.data;
+  const out=new Uint8ClampedArray(src);
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      for(let c=0;c<3;c++){
+        let i=(y*w+x)*4+c,sum=0;
+        for(let ky=-1;ky<=1;ky++){
+          for(let kx=-1;kx<=1;kx++){
+            let ii=((y+ky)*w+(x+kx))*4+c;
+            sum+=src[ii];
+          }
+        }
+        out[i]=src[i]*(1-amount)+(sum/9)*amount;
+      }
+    }
+  }
+  return new ImageData(out,w,h);
+}
+
+/* Apply filters & split preview */
+function applyFilters(){
+  if(!originalImageData) return;
+  let img=new ImageData(new Uint8ClampedArray(originalImageData.data),originalImageData.width,originalImageData.height);
+  img=sharpen(img,smoothAmount(parseFloat(sharp.value)/3));
+  img=reduceNoise(img,parseFloat(noise.value)/3);
+  const w=canvas.width,h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+  ctx.putImageData(img,0,0);
+  if(originalForCompare && !disableSplit && splitEnabled){
+    const splitPixel=Math.floor(w*splitX);
+    ctx.drawImage(originalForCompare,0,0,originalForCompare.width,originalForCompare.height,0,0,splitPixel,h);
+  }
+  baseImageData=ctx.getImageData(0,0,w,h);
+}
+
+/* Render loop */
+let lastSharp=sharp.value,lastNoise=noise.value;
+function render(){
+  if(needsUpdate||lastSharp!=sharp.value||lastNoise!=noise.value){
+    applyFilters();needsUpdate=false;lastSharp=sharp.value;lastNoise=noise.value;
+  }
+  requestAnimationFrame(render);
+}
+render();
+
+/* Zoom & pan */
+function updateZoom(){canvas.style.transform=`translate(${offsetX}px,${offsetY}px) scale(${zoom*displayScale})`;}
+document.getElementById("zoom").addEventListener("input",e=>{zoom=parseInt(e.target.value)/100;updateZoom();});
+container.addEventListener('pointerdown',e=>{if(zoom<=1) return;isDragging=true;dragStartX=e.clientX-offsetX;dragStartY=e.clientY-offsetY;container.style.cursor="grabbing";});
+window.addEventListener('pointermove',e=>{if(!isDragging) return;offsetX=Math.min(0,Math.max(container.clientWidth-canvas.width*zoom*displayScale,e.clientX-dragStartX));offsetY=Math.min(0,Math.max(container.clientHeight-canvas.height*zoom*displayScale,e.clientY-dragStartY));updateZoom();});
+window.addEventListener('pointerup',()=>{isDragging=false;container.style.cursor="default";});
+
+/* Controls */
+document.getElementById("sharp").oninput=()=>{needsUpdate=true;};
+document.getElementById("noise").oninput=()=>{needsUpdate=true;};
+document.getElementById("auto").onclick=()=>{sharp.value=2;noise.value=1;needsUpdate=true;};
+document.getElementById("reset").onclick=()=>{
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  document.getElementById("upload").value="";
+  sharp.value=1; noise.value=0; zoom=1; document.getElementById("zoom").value=100;
+  splitX=0.5; offsetX=0; offsetY=0;
+  originalForCompare=null; disableSplit=false; splitEnabled=true;
+  updateImageInfo(0,0,0,0);
+  updateZoom();
+};
+document.getElementById("download").onclick=()=>{
+  const a=document.createElement("a");a.download="SharpX.png";a.href=canvas.toDataURL();a.click();
+};
+document.getElementById("darkToggle").onclick=()=>document.body.classList.toggle("dark");
+
+/* Split toggle */
+const splitToggleBtn=document.getElementById("splitToggle");
+splitToggleBtn.onclick=()=>{splitEnabled=!splitEnabled;splitToggleBtn.textContent=splitEnabled?"Split On":"Split Off";needsUpdate=true;};
+
+/* Split handle */
+const splitHandle=document.getElementById("splitHandle");
+let splitDragging=false;
+function updateSplitHandlePosition(){const cr=canvas.getBoundingClientRect();const cont=container.getBoundingClientRect();const hx=cr.left+canvas.width*splitX*zoom*displayScale;splitHandle.style.left=`${hx-cont.left-splitHandle.offsetWidth/2}px`;}
+splitHandle.onpointerdown=e=>{e.stopPropagation();splitDragging=true;container.style.cursor="ew-resize";};
+window.addEventListener('pointermove',e=>{if(splitDragging){const cr=canvas.getBoundingClientRect();splitX=Math.min(Math.max((e.clientX-cr.left)/(canvas.width*zoom*displayScale),0),1);updateSplitHandlePosition();needsUpdate=true;}});
+window.addEventListener('pointerup',()=>{splitDragging=false;container.style.cursor="default";});
+function updateSplitLoop(){if(!splitDragging)updateSplitHandlePosition();requestAnimationFrame(updateSplitLoop);}updateSplitLoop();
+
+/* Image info */
+const imageInfo=document.getElementById("imageInfo");
+function updateImageInfo(bw,bh,aw,ah){const dpi=parseInt(document.getElementById("dpi").value)||300;const bpw=(bw/dpi).toFixed(2);const bph=(bh/dpi).toFixed(2);const apw=(aw/dpi).toFixed(2);const aph=(ah/dpi).toFixed(2);imageInfo.innerHTML=`<strong>Before:</strong> ${bw}×${bh}px | Print: ${bpw}×${bph} in<br><strong>After:</strong> ${aw}×${ah}px | Print: ${apw}×${aph} in | DPI: ${dpi}`;}
+
+/* Upscale */
+document.getElementById("upscale").onclick=()=>{
+  if(!baseImageData)return;
+  const factor=parseInt(document.getElementById("upscaleFactor").value);
+  const bw=canvas.width,bh=canvas.height;
+  originalForCompare=null;disableSplit=true;
+  const nw=bw*factor,nh=bh*factor;
+  const off=document.createElement("canvas");off.width=nw;off.height=nh;
+  const offCtx=off.getContext("2d");offCtx.imageSmoothingEnabled=true;offCtx.imageSmoothingQuality='high';
+  offCtx.drawImage(canvas,0,0,nw,nh);
+  canvas.width=nw;canvas.height=nh;
+  ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
+  ctx.drawImage(off,0,0);
+  originalImageData=ctx.getImageData(0,0,nw,nh);
+  baseImageData=ctx.getImageData(0,0,nw,nh);
+  displayScale=Math.min(container.clientWidth/canvas.width,container.clientHeight/canvas.height,1);
+  offsetX=(container.clientWidth-canvas.width*displayScale)/2;offsetY=(container.clientHeight-canvas.height*displayScale)/2;
+  zoom=1; document.getElementById("zoom").value=100;
+  updateZoom();
+  updateImageInfo(bw,bh,nw,nh);
+  needsUpdate=true;
+};
+
+/* Camera */
+const cameraBtn=document.getElementById('cameraBtn');
+const cameraModal=document.getElementById('cameraModal');
+const cameraVideo=document.getElementById('cameraVideo');
+const capturePhoto=document.getElementById('capturePhoto');
+const closeCamera=document.getElementById('closeCamera');
+let cameraStream=null;
+
+cameraBtn.onclick=async()=>{
+  try{
+    cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+    cameraVideo.srcObject=cameraStream;cameraModal.style.display="flex";
+  }catch(err){alert("Camera access denied or unavailable.");console.error(err);}
+};
+capturePhoto.onclick=()=>{
+  if(!cameraStream)return;
+  const track=cameraStream.getVideoTracks()[0];
+  canvas.width=cameraVideo.videoWidth;canvas.height=cameraVideo.videoHeight;
+  ctx.drawImage(cameraVideo,0,0,canvas.width,canvas.height);
+  originalImageData=ctx.getImageData(0,0,canvas.width,canvas.height);
+  baseImageData=ctx.getImageData(0,0,canvas.width,canvas.height);
+  displayScale=Math.min(container.clientWidth/canvas.width,container.clientHeight/canvas.height,1);
+  offsetX=(container.clientWidth-canvas.width*displayScale)/2;offsetY=(container.clientHeight-canvas.height*displayScale)/2;
+  zoom=1;document.getElementById("zoom").value=100;
+  updateZoom();needsUpdate=true;
+  track.stop();cameraModal.style.display="none";cameraStream=null;
+};
+closeCamera.onclick=()=>{
+  if(cameraStream)cameraStream.getTracks().forEach(track=>track.stop());
+  cameraModal.style.display="none";cameraStream=null;
+};
+
+/* Offline */
+function updateOfflineStatus(){
+  const offline=!navigator.onLine;
+  document.body.classList.toggle("offline",offline);
+  document.getElementById("offlineBadge").style.display=offline?"block":"none";
+}
+window.addEventListener("online",updateOfflineStatus);
+window.addEventListener("offline",updateOfflineStatus);
+updateOfflineStatus();
+
+/* PWA Update Toast */
+let newWorker;
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("./sw.js").then(reg=>{
+    reg.addEventListener("updatefound",()=>{
+      newWorker=reg.installing;
+      newWorker.addEventListener("statechange",()=>{
+        if(newWorker.state==="installed" && navigator.serviceWorker.controller){
+          document.getElementById("updateToast").style.display="flex";
+        }
+      });
+    });
+  });
+}
+document.getElementById("reloadBtn").onclick=()=>{if(newWorker)newWorker.postMessage({action:"skipWaiting"});}
+</script>
+</body>
+</html>
