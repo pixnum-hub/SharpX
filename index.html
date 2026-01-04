@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SharpX</title>
-
+<title>SharpX – Final Clean PWA</title>
+<link rel="manifest" href="manifest.json">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{
@@ -17,85 +17,66 @@ body{
 }
 .app{
   width:100%;
-  max-width:540px;
+  max-width:520px;
   background:rgba(255,255,255,.18);
-  backdrop-filter:blur(16px);
-  border-radius:22px;
+  backdrop-filter:blur(14px);
+  border-radius:20px;
   padding:16px;
   color:#fff;
 }
-.header{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  margin-bottom:10px;
+.canvas-wrap{
+  position:relative;
+  overflow:hidden;
+  border-radius:14px;
+  background:#000;
+  touch-action:none;
+}
+canvas{display:block;width:100%}
+.split{
+  position:absolute;
+  top:0;bottom:0;
+  width:20px;margin-left:-10px;
+  background:rgba(255,255,255,.7);
+  border-radius:6px;
+  touch-action:none;
+  cursor:ew-resize;
+}
+.controls{margin-top:10px;display:grid;gap:8px}
+label{font-size:.85rem}
+input,select,button{
+  width:100%;
+  padding:8px;
+  border-radius:10px;
+  border:none;
 }
 button{
   background:rgba(255,255,255,.25);
   color:#fff;
-  border:none;
-  border-radius:12px;
-  padding:10px;
   font-weight:600;
   cursor:pointer;
 }
-.controls{display:grid;gap:8px;margin-top:10px}
-label{font-size:.85rem}
-input[type=range]{width:100%}
-
-.canvas-container{
-  position:relative;
-  overflow:hidden;
-  border-radius:16px;
-  touch-action:none;
-  user-select:none;
-}
-canvas{
-  display:block;
-  background:#000;
-  touch-action:none;
-}
-
-/* MOBILE-SAFE SPLIT HANDLE */
-.splitHandle{
-  position:absolute;
-  top:0;
-  bottom:0;
-  width:24px;
-  margin-left:-12px;
-  background:rgba(255,255,255,.75);
-  border-radius:6px;
-  cursor:ew-resize;
-  z-index:10;
-  touch-action:none;
-}
-
-.buttons{
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px;
+.info{
+  font-size:.8rem;
+  opacity:.85;
 }
 footer{
-  text-align:center;
-  font-size:.75rem;
-  opacity:.8;
   margin-top:8px;
+  font-size:.75rem;
+  text-align:center;
+  opacity:.8;
 }
 </style>
 </head>
-
 <body>
 <div class="app">
-  <div class="header">
-    <h3>SharpX</h3>
-    <button onclick="resetView()">Reset View</button>
-  </div>
-
   <input type="file" id="upload" accept="image/*">
+  <button id="cameraBtn">Open Camera</button>
+  <video id="camera" playsinline autoplay style="display:none;width:100%"></video>
+  <button id="captureBtn" style="display:none">Capture</button>
 
-  <div class="canvas-container" id="container">
+  <div class="canvas-wrap" id="wrap">
     <canvas id="canvas"></canvas>
-    <div class="splitHandle" id="splitHandle"></div>
+    <div class="split" id="split"></div>
   </div>
 
   <div class="controls">
@@ -103,62 +84,111 @@ footer{
     <input type="range" id="sharp" min="0" max="3" step="0.01" value="1">
 
     <label>Zoom</label>
-    <input type="range" id="zoom" min="100" max="300" value="100">
+    <input type="range" id="zoom" min="1" max="2" step="0.01" value="1">
 
     <label>Upscale</label>
-    <div class="buttons">
-      <button onclick="upscaleImage(2)">2×</button>
-      <button onclick="upscaleImage(4)">4×</button>
-      <button onclick="download()">Download</button>
-    </div>
+    <select id="upscale">
+      <option value="1">None</option>
+      <option value="2">2×</option>
+      <option value="4">4×</option>
+    </select>
+
+    <label>DPI</label>
+    <input type="number" id="dpiInput" value="300" min="72" max="600">
+
+    <label>Export Format</label>
+    <select id="format">
+      <option value="png">PNG</option>
+      <option value="jpeg">JPEG</option>
+    </select>
+
+    <label>JPEG Quality</label>
+    <input type="range" id="jpgQuality" min="0.8" max="1" step="0.01" value="0.92">
+
+    <div class="info" id="info"></div>
+
+    <button id="download">Download</button>
   </div>
 
-  <footer>© SharpX</footer>
+  <footer>SharpX · Final Clean Build</footer>
 </div>
 
 <script>
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const container = document.getElementById("container");
-const splitHandle = document.getElementById("splitHandle");
-const zoomSlider = document.getElementById("zoom");
-const sharp = document.getElementById("sharp");
+/* ========== CORE VARIABLES ========== */
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+const wrap=document.getElementById("wrap");
+const split=document.getElementById("split");
 
-let original = null;
-let zoom = 1;
-let offsetX = 0;
-let offsetY = 0;
-let dragging = false;
-let startX = 0;
-let startY = 0;
-let sx = 0.5;
-let splitDragging = false;
+const sharp=document.getElementById("sharp");
+const zoom=document.getElementById("zoom");
+const upscaleSel=document.getElementById("upscale");
+const dpiInput=document.getElementById("dpiInput");
+const info=document.getElementById("info");
+const formatSel=document.getElementById("format");
+const jpgQuality=document.getElementById("jpgQuality");
 
-/* ---------- IMAGE LOAD ---------- */
-upload.onchange = e => {
-  const f = e.target.files[0];
-  if (!f) return;
-  const r = new FileReader();
-  r.onload = () => {
-    const img = new Image();
-    img.onload = () => fit(img);
-    img.src = r.result;
+const cameraBtn = document.getElementById("cameraBtn");
+const camera = document.getElementById("camera");
+const captureBtn = document.getElementById("captureBtn");
+
+let img=null, originalImg=null;
+let base={w:0,h:0};
+let splitX=0.5;
+let pan={x:0,y:0}, panStart={}, pointerStart={};
+let panning=false, draggingSplit=false;
+let stream=null;
+
+/* ========= IMAGE LOAD ========= */
+upload.onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    const i=new Image();
+    i.onload=()=>{originalImg=img=i;base.w=i.width;base.h=i.height;fitCanvas();resetPan();draw();updateInfo();}
+    i.src=r.result;
   };
   r.readAsDataURL(f);
 };
 
-function fit(img){
-  const w = container.clientWidth;
-  const s = w / img.width;
-  canvas.width = img.width * s;
-  canvas.height = img.height * s;
-  ctx.drawImage(img,0,0,canvas.width,canvas.height);
-  original = ctx.getImageData(0,0,canvas.width,canvas.height);
-  draw();
+/* ========= CAMERA INPUT ========= */
+cameraBtn.onclick=async()=>{
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+  camera.srcObject=stream;
+  camera.style.display="block";
+  captureBtn.style.display="block";
+};
+captureBtn.onclick=()=>{
+  const c=document.createElement("canvas");
+  c.width=camera.videoWidth; c.height=camera.videoHeight;
+  c.getContext("2d").drawImage(camera,0,0);
+  const i=new Image();
+  i.onload=()=>{
+    originalImg=img=i; base.w=i.width;base.h=i.height;
+    fitCanvas(); resetPan(); draw(); updateInfo();
+  };
+  i.src=c.toDataURL();
+  stream.getTracks().forEach(t=>t.stop());
+  camera.style.display=captureBtn.style.display="none";
+};
+
+/* ========= FIT CANVAS ========= */
+function fitCanvas(){
+  const w=wrap.clientWidth;
+  const s=w/base.w;
+  canvas.width=base.w*s; canvas.height=base.h*s;
+}
+function resetPan(){pan.x=pan.y=0;}
+function clampPan(){
+  const z=zoom.value;
+  const mx=(canvas.width*(z-1))/2;
+  const my=(canvas.height*(z-1))/2;
+  pan.x=Math.max(-mx,Math.min(mx,pan.x));
+  pan.y=Math.max(-my,Math.min(my,pan.y));
 }
 
-/* ---------- SHARPEN ---------- */
-function sharpenImage(img,a){
+/* ========= SHARPEN ========= */
+function sharpenData(img,a){
   if(a<=0) return img;
   const d=img.data,o=new Uint8ClampedArray(d);
   const k=[0,-1,0,-1,5,-1,0,-1,0];
@@ -174,131 +204,98 @@ function sharpenImage(img,a){
   return img;
 }
 
-/* ---------- DRAW ---------- */
+/* ========= DRAW ========= */
 function draw(){
-  if(!original) return;
-
-  let img=new ImageData(
-    new Uint8ClampedArray(original.data),
-    original.width,
-    original.height
-  );
-
-  img=sharpenImage(img, sharp.value/3);
-  ctx.putImageData(img,0,0);
-
-  const w = canvas.width;
-  ctx.drawImage(canvas,0,0,w*sx,canvas.height,0,0,w*sx,canvas.height);
-
-  splitHandle.style.left = (sx * 100) + "%";
-  updateTransform();
+  if(!img) return;
+  clampPan();
+  const z=zoom.value;
+  const cw=canvas.width,ch=canvas.height;
+  const dw=cw*z,dh=ch*z;
+  const dx=(cw-dw)/2+pan.x, dy=(ch-dh)/2+pan.y;
+  ctx.clearRect(0,0,cw,ch);
+  ctx.drawImage(img,dx,dy,dw,dh);
+  let id=ctx.getImageData(0,0,cw,ch);
+  id=sharpenData(id,sharp.value/3);
+  ctx.putImageData(id,0,0);
+  ctx.drawImage(canvas,0,0,cw*splitX,ch,0,0,cw*splitX,ch);
+  split.style.left=(splitX*100)+"%";
 }
+sharp.oninput=draw; zoom.oninput=()=>{resetPan();draw();};
 
-sharp.oninput = draw;
+/* ========= PAN EVENTS ========= */
+wrap.onpointerdown=e=>{
+  if(e.target===split||zoom.value<=1) return;
+  panning=true; pointerStart={x:e.clientX,y:e.clientY}; panStart={x:pan.x,y:pan.y};
+  wrap.setPointerCapture(e.pointerId);
+};
+wrap.onpointermove=e=>{if(!panning) return; pan.x=panStart.x+(e.clientX-pointerStart.x); pan.y=panStart.y+(e.clientY-pointerStart.y); draw();};
+wrap.onpointerup=e=>{panning=false; wrap.releasePointerCapture(e.pointerId);};
 
-/* ---------- TRANSFORM ---------- */
-function updateTransform(){
-  canvas.style.transform =
-    `translate(${offsetX}px,${offsetY}px) scale(${zoom})`;
-}
+/* ========= SPLIT ========= */
+split.onpointerdown=e=>{draggingSplit=true; split.setPointerCapture(e.pointerId);}
+split.onpointermove=e=>{if(!draggingSplit) return; const r=wrap.getBoundingClientRect(); splitX=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)); draw();}
+split.onpointerup=e=>{draggingSplit=false; split.releasePointerCapture(e.pointerId);};
 
-/* ---------- PAN (DRAG IMAGE) ---------- */
-container.addEventListener("pointerdown", e=>{
-  if(zoom<=1) return;
-  dragging=true;
-  container.setPointerCapture(e.pointerId);
-  startX=e.clientX-offsetX;
-  startY=e.clientY-offsetY;
-});
-
-container.addEventListener("pointermove", e=>{
-  if(!dragging) return;
-  offsetX=e.clientX-startX;
-  offsetY=e.clientY-startY;
-
-  const minX = container.clientWidth - canvas.width * zoom;
-  const minY = container.clientHeight - canvas.height * zoom;
-
-  offsetX = Math.min(0, Math.max(minX, offsetX));
-  offsetY = Math.min(0, Math.max(minY, offsetY));
-
-  updateTransform();
-});
-
-window.addEventListener("pointerup", ()=>dragging=false);
-
-/* ---------- ZOOM ---------- */
-zoomSlider.oninput = e=>{
-  const prev = zoom;
-  zoom = parseInt(e.target.value)/100;
-
-  const cx = container.clientWidth/2;
-  const cy = container.clientHeight/2;
-
-  offsetX = cx - ((cx - offsetX) * zoom / prev);
-  offsetY = cy - ((cy - offsetY) * zoom / prev);
-
-  updateTransform();
+/* ========= UPSCALE ========= */
+upscaleSel.onchange=()=>{
+  const f=+upscaleSel.value;
+  if(f===1){img=originalImg}
+  else{
+    const c=document.createElement("canvas");
+    c.width=originalImg.width*f; c.height=originalImg.height*f;
+    c.getContext("2d").drawImage(originalImg,0,0,c.width,c.height);
+    const i=new Image(); i.onload=()=>{img=i;base.w=i.width;base.h=i.height; fitCanvas(); resetPan(); draw(); updateInfo();};
+    i.src=c.toDataURL();
+  }
+  splitX=1; draw(); updateInfo();
 };
 
-/* ---------- MOBILE-SAFE SPLIT ---------- */
-splitHandle.addEventListener("pointerdown", e=>{
-  e.preventDefault();
-  e.stopPropagation();
-  splitDragging = true;
-  splitHandle.setPointerCapture(e.pointerId);
-});
-
-splitHandle.addEventListener("pointermove", e=>{
-  if(!splitDragging) return;
-
-  const rect = container.getBoundingClientRect();
-  let x = e.clientX - rect.left;
-  x = Math.max(0, Math.min(rect.width, x));
-
-  sx = x / rect.width;
-  splitHandle.style.left = x + "px";
-  draw();
-});
-
-splitHandle.addEventListener("pointerup", e=>{
-  splitDragging=false;
-  splitHandle.releasePointerCapture(e.pointerId);
-});
-
-splitHandle.addEventListener("pointercancel", ()=>splitDragging=false);
-
-/* ---------- UPSCALE ---------- */
-function upscaleImage(f){
-  const off=document.createElement("canvas");
-  off.width=canvas.width*f;
-  off.height=canvas.height*f;
-  off.getContext("2d").drawImage(canvas,0,0,off.width,off.height);
-
-  canvas.width=off.width;
-  canvas.height=off.height;
-  ctx.drawImage(off,0,0);
-
-  original=ctx.getImageData(0,0,canvas.width,canvas.height);
-  resetView();
-  draw();
+/* ========= INFO ========= */
+function updateInfo(){
+  if(!img) return;
+  const dpi=+dpiInput.value; const w=img.width,h=img.height;
+  info.innerHTML=`Image: ${w}×${h}px<br>Print @${dpi} DPI: ${(w/dpi).toFixed(2)}" × ${(h/dpi).toFixed(2)}"`;
 }
+dpiInput.oninput=updateInfo;
 
-/* ---------- RESET ---------- */
-function resetView(){
-  zoom=1;
-  offsetX=0;
-  offsetY=0;
-  zoomSlider.value=100;
-  updateTransform();
+/* ========= DOWNLOAD ========== */
+download.onclick=()=>{
+  const dpi=+dpiInput.value;
+  const type=formatSel.value;
+  if(type==="jpeg"){
+    canvas.toBlob(b=>{
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(b);
+      a.download="SharpX_PrintReady.jpg";
+      a.click();
+    },"image/jpeg",+jpgQuality.value);
+  } else {
+    canvas.toBlob(b=>{
+      const r=new FileReader();
+      r.onload=()=>{
+        const p=new Uint8Array(r.result);
+        const out=addDPI(p,Math.round(dpi/0.0254));
+        const a=document.createElement("a");
+        a.href=URL.createObjectURL(new Blob([out],{type:"image/png"}));
+        a.download="SharpX_PrintReady.png";
+        a.click();
+      };
+      r.readAsArrayBuffer(b);
+    },"image/png");
+  }
+};
+function addDPI(png,ppm){
+  const pHYs=new Uint8Array(21); const d=new DataView(pHYs.buffer);
+  d.setUint32(0,9); pHYs.set([112,72,89,115],4); d.setUint32(8,ppm); d.setUint32(12,ppm); pHYs[16]=1; d.setUint32(17,crc32(pHYs.subarray(4,17)));
+  return new Uint8Array([...png.slice(0,33),...pHYs,...png.slice(33)]);
 }
+function crc32(a){let c=-1;for(let b of a){c^=b;for(let k=0;k<8;k++)c=(c>>>1)^(0xEDB88320&-(c&1))}return(c^=-1)>>>0;}
 
-/* ---------- DOWNLOAD ---------- */
-function download(){
-  const a=document.createElement("a");
-  a.download="SharpX.png";
-  a.href=canvas.toDataURL();
-  a.click();
+/* ========= PWA REG ========= */
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("sw.js").then(reg=>{
+    reg.onupdatefound=()=>{alert("🔔 New version available. Refresh app.");};
+  });
 }
 </script>
 </body>
