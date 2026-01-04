@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SharpX</title>
 
 <style>
@@ -41,7 +41,7 @@ button{
 }
 .controls{display:grid;gap:8px;margin-top:10px}
 label{font-size:.85rem}
-input[type=range],input[type=number]{width:100%}
+input[type=range]{width:100%}
 
 .canvas-container{
   position:relative;
@@ -56,13 +56,17 @@ canvas{
   touch-action:none;
 }
 
+/* MOBILE-SAFE SPLIT HANDLE */
 .splitHandle{
   position:absolute;
-  top:0;bottom:0;
-  width:4px;
-  background:#fff;
-  opacity:.6;
+  top:0;
+  bottom:0;
+  width:24px;
+  margin-left:-12px;
+  background:rgba(255,255,255,.75);
+  border-radius:6px;
   cursor:ew-resize;
+  z-index:10;
   touch-action:none;
 }
 
@@ -118,14 +122,30 @@ const ctx = canvas.getContext("2d");
 const container = document.getElementById("container");
 const splitHandle = document.getElementById("splitHandle");
 const zoomSlider = document.getElementById("zoom");
+const sharp = document.getElementById("sharp");
 
 let original = null;
 let zoom = 1;
 let offsetX = 0;
 let offsetY = 0;
 let dragging = false;
+let startX = 0;
+let startY = 0;
 let sx = 0.5;
 let splitDragging = false;
+
+/* ---------- IMAGE LOAD ---------- */
+upload.onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    const img = new Image();
+    img.onload = () => fit(img);
+    img.src = r.result;
+  };
+  r.readAsDataURL(f);
+};
 
 function fit(img){
   const w = container.clientWidth;
@@ -137,19 +157,8 @@ function fit(img){
   draw();
 }
 
-upload.onchange=e=>{
-  const f=e.target.files[0];
-  if(!f) return;
-  const r=new FileReader();
-  r.onload=()=>{
-    const i=new Image();
-    i.onload=()=>fit(i);
-    i.src=r.result;
-  };
-  r.readAsDataURL(f);
-};
-
-function sharpen(img,a){
+/* ---------- SHARPEN ---------- */
+function sharpenImage(img,a){
   if(a<=0) return img;
   const d=img.data,o=new Uint8ClampedArray(d);
   const k=[0,-1,0,-1,5,-1,0,-1,0];
@@ -165,80 +174,126 @@ function sharpen(img,a){
   return img;
 }
 
+/* ---------- DRAW ---------- */
 function draw(){
   if(!original) return;
-  let img=new ImageData(new Uint8ClampedArray(original.data),original.width,original.height);
-  img=sharpen(img,sharp.value/3);
+
+  let img=new ImageData(
+    new Uint8ClampedArray(original.data),
+    original.width,
+    original.height
+  );
+
+  img=sharpenImage(img, sharp.value/3);
   ctx.putImageData(img,0,0);
 
-  const w=canvas.width;
+  const w = canvas.width;
   ctx.drawImage(canvas,0,0,w*sx,canvas.height,0,0,w*sx,canvas.height);
-  splitHandle.style.left=(sx*100)+"%";
+
+  splitHandle.style.left = (sx * 100) + "%";
   updateTransform();
 }
 
-sharp.oninput=draw;
+sharp.oninput = draw;
 
+/* ---------- TRANSFORM ---------- */
 function updateTransform(){
-  canvas.style.transform=`translate(${offsetX}px,${offsetY}px) scale(${zoom})`;
+  canvas.style.transform =
+    `translate(${offsetX}px,${offsetY}px) scale(${zoom})`;
 }
 
-container.addEventListener("pointerdown",e=>{
+/* ---------- PAN (DRAG IMAGE) ---------- */
+container.addEventListener("pointerdown", e=>{
+  if(zoom<=1) return;
   dragging=true;
   container.setPointerCapture(e.pointerId);
   startX=e.clientX-offsetX;
   startY=e.clientY-offsetY;
 });
 
-container.addEventListener("pointermove",e=>{
+container.addEventListener("pointermove", e=>{
   if(!dragging) return;
   offsetX=e.clientX-startX;
   offsetY=e.clientY-startY;
+
+  const minX = container.clientWidth - canvas.width * zoom;
+  const minY = container.clientHeight - canvas.height * zoom;
+
+  offsetX = Math.min(0, Math.max(minX, offsetX));
+  offsetY = Math.min(0, Math.max(minY, offsetY));
+
   updateTransform();
 });
 
-window.addEventListener("pointerup",()=>dragging=false);
+window.addEventListener("pointerup", ()=>dragging=false);
 
-zoomSlider.oninput=e=>{
-  zoom=parseInt(e.target.value)/100;
+/* ---------- ZOOM ---------- */
+zoomSlider.oninput = e=>{
+  const prev = zoom;
+  zoom = parseInt(e.target.value)/100;
+
+  const cx = container.clientWidth/2;
+  const cy = container.clientHeight/2;
+
+  offsetX = cx - ((cx - offsetX) * zoom / prev);
+  offsetY = cy - ((cy - offsetY) * zoom / prev);
+
   updateTransform();
 };
 
-splitHandle.onpointerdown=e=>{
-  splitDragging=true;
+/* ---------- MOBILE-SAFE SPLIT ---------- */
+splitHandle.addEventListener("pointerdown", e=>{
+  e.preventDefault();
   e.stopPropagation();
-};
+  splitDragging = true;
+  splitHandle.setPointerCapture(e.pointerId);
+});
 
-window.addEventListener("pointermove",e=>{
+splitHandle.addEventListener("pointermove", e=>{
   if(!splitDragging) return;
-  const r=container.getBoundingClientRect();
-  let x=e.clientX-r.left;
-  x=Math.max(0,Math.min(r.width,x));
-  sx=x/r.width;
+
+  const rect = container.getBoundingClientRect();
+  let x = e.clientX - rect.left;
+  x = Math.max(0, Math.min(rect.width, x));
+
+  sx = x / rect.width;
+  splitHandle.style.left = x + "px";
   draw();
 });
 
-window.addEventListener("pointerup",()=>splitDragging=false);
+splitHandle.addEventListener("pointerup", e=>{
+  splitDragging=false;
+  splitHandle.releasePointerCapture(e.pointerId);
+});
 
+splitHandle.addEventListener("pointercancel", ()=>splitDragging=false);
+
+/* ---------- UPSCALE ---------- */
 function upscaleImage(f){
   const off=document.createElement("canvas");
   off.width=canvas.width*f;
   off.height=canvas.height*f;
   off.getContext("2d").drawImage(canvas,0,0,off.width,off.height);
+
   canvas.width=off.width;
   canvas.height=off.height;
   ctx.drawImage(off,0,0);
+
   original=ctx.getImageData(0,0,canvas.width,canvas.height);
-  zoom=1;offsetX=0;offsetY=0;
-  updateTransform();
+  resetView();
+  draw();
 }
 
+/* ---------- RESET ---------- */
 function resetView(){
-  zoom=1;offsetX=0;offsetY=0;
+  zoom=1;
+  offsetX=0;
+  offsetY=0;
   zoomSlider.value=100;
   updateTransform();
 }
 
+/* ---------- DOWNLOAD ---------- */
 function download(){
   const a=document.createElement("a");
   a.download="SharpX.png";
