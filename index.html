@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SharpX – Final Clean PWA</title>
+<title>SharpX – Mobile-Friendly Final PWA</title>
 <link rel="manifest" href="manifest.json">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -11,37 +11,52 @@ body{
   min-height:100vh;
   display:flex;
   justify-content:center;
-  align-items:center;
+  align-items:flex-start;
   background:linear-gradient(135deg,#1d2671,#c33764);
   font-family:system-ui;
   transition:.3s;
+  padding:10px;
 }
 body.dark{background:linear-gradient(135deg,#000,#222);color:#fff;}
 .app{
-  width:100%;
+  width:95%;
   max-width:520px;
+  margin:0 auto;
   background:rgba(255,255,255,.18);
   backdrop-filter:blur(14px);
   border-radius:20px;
-  padding:16px;
+  padding:12px;
   color:#fff;
 }
 .header{
   display:flex;
   justify-content:space-between;
   align-items:center;
+  flex-wrap:wrap;
   margin-bottom:10px;
 }
-.header h2{font-size:1.5rem;}
-.header button{width:40px;height:40px;border-radius:50%;border:none;font-size:18px;cursor:pointer;background:rgba(255,255,255,.25);color:#fff;}
+.header h2{font-size:1.2rem; flex:1 1 auto; min-width:120px;}
+.header button{
+  width:40px; height:40px;
+  border-radius:50%;
+  border:none;
+  font-size:18px;
+  cursor:pointer;
+  background:rgba(255,255,255,.25);
+  color:#fff;
+  flex:0 0 auto;
+  margin-top:5px;
+}
+canvas{display:block;width:100%;height:auto;border-radius:14px;}
 .canvas-wrap{
   position:relative;
   overflow:hidden;
   border-radius:14px;
   background:#000;
   touch-action:none;
+  width:100%;
+  max-width:100%;
 }
-canvas{display:block;width:100%;}
 .split{
   position:absolute; top:0; bottom:0;
   width:20px; margin-left:-10px;
@@ -74,12 +89,18 @@ footer{
   text-align:center;
   opacity:.8;
 }
+
+/* MOBILE SMALL SCREEN FIXES */
+@media (max-width:400px){
+  .header h2{font-size:1rem;}
+  .controls input, .controls select, .controls button{font-size:0.85rem; padding:6px;}
+}
 </style>
 </head>
 <body>
 <div class="app">
 
-  <!-- Header with title + dark mode toggle -->
+  <!-- Header -->
   <div class="header">
     <h2>SharpX</h2>
     <button id="darkToggle">🌙</button>
